@@ -1,0 +1,13 @@
+**/config.php
+**/auravalt_private/
+**/media/
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.log
+.env
+.env.*
+!.env.example
+vendor/
+.DS_Store
+Thumbs.db
