@@ -64,4 +64,21 @@ av_install_register_failure($throttleFile);
 check(av_install_throttled($throttleFile), 'Cinco chaves inválidas não bloquearam o instalador.');
 unlink($throttleFile);
 
+$filters = av_library_filters(['type' => 'video', 'sort' => 'x; DROP TABLE media', 'q' => "  foto\t "]);
+check($filters === ['type' => 'video', 'sort' => 'recent', 'q' => 'foto'], 'Filtros da biblioteca não foram normalizados.');
+check(av_library_filters(['type' => 'pdf'])['type'] === 'all', 'Tipo de mídia inválido foi aceito.');
+$statement = $db->prepare('INSERT INTO media (id, owner_id, stored_name, original_name, mime_type, size_bytes) VALUES (?, ?, ?, ?, ?, ?)');
+$statement->execute([bin2hex(random_bytes(16)), $ownerId, bin2hex(random_bytes(24)) . '.mp4', '100%_video.mp4', 'video/mp4', 4096]);
+[$where, $params] = av_library_where(['type' => 'video', 'sort' => 'recent', 'q' => '100%_'], $ownerId);
+$count = $db->prepare('SELECT COUNT(*) FROM media WHERE ' . $where);
+$count->execute($params);
+check((int) $count->fetchColumn() === 1, 'Busca com % e _ não foi tratada como texto literal.');
+[$where, $params] = av_library_where(['type' => 'image', 'sort' => 'recent', 'q' => '%'], $ownerId);
+$count = $db->prepare('SELECT COUNT(*) FROM media WHERE ' . $where);
+$count->execute($params);
+check((int) $count->fetchColumn() === 0, 'Curinga % na busca retornou resultados indevidos.');
+$stats = av_library_stats($db, $ownerId);
+check($stats['videos'] === 1 && $stats['total'] === $stats['images'] + $stats['videos'], 'Estatísticas da biblioteca incorretas.');
+check(av_library_url(['type' => 'all', 'sort' => 'recent', 'q' => '']) === './', 'URL da biblioteca sem filtros incorreta.');
+
 fwrite(STDOUT, "AuraVault smoke test: OK\n");

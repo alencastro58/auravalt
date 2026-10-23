@@ -259,3 +259,93 @@ function av_format_bytes(int $bytes): string
 
     return $bytes . ' B';
 }
+
+function av_library_sorts(): array
+{
+    return [
+        'recent' => ['label' => 'Mais recentes', 'sql' => 'created_at DESC, id DESC'],
+        'old' => ['label' => 'Mais antigos', 'sql' => 'created_at ASC, id ASC'],
+        'size' => ['label' => 'Maior tamanho', 'sql' => 'size_bytes DESC, id DESC'],
+        'name' => ['label' => 'Nome (A–Z)', 'sql' => 'original_name ASC, id ASC'],
+    ];
+}
+
+function av_library_filters(array $query): array
+{
+    $type = (string) ($query['type'] ?? 'all');
+    if (!in_array($type, ['all', 'image', 'video'], true)) {
+        $type = 'all';
+    }
+    $sort = (string) ($query['sort'] ?? 'recent');
+    if (!array_key_exists($sort, av_library_sorts())) {
+        $sort = 'recent';
+    }
+    $search = trim(preg_replace('/\s+/u', ' ', (string) ($query['q'] ?? '')) ?? '');
+    $search = function_exists('mb_substr') ? mb_substr($search, 0, 100) : substr($search, 0, 100);
+    return ['type' => $type, 'sort' => $sort, 'q' => $search];
+}
+
+/**
+ * Monta o WHERE da biblioteca. Tipo e ordenação vêm de lista fechada; a busca vai por parâmetro.
+ */
+function av_library_where(array $filters, int $ownerId): array
+{
+    $sql = 'owner_id = ?';
+    $params = [$ownerId];
+    if ($filters['type'] === 'image') {
+        $sql .= " AND mime_type LIKE 'image/%'";
+    } elseif ($filters['type'] === 'video') {
+        $sql .= " AND mime_type LIKE 'video/%'";
+    }
+    if ($filters['q'] !== '') {
+        $sql .= " AND original_name LIKE ? ESCAPE '!'";
+        $params[] = '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $filters['q']) . '%';
+    }
+    return [$sql, $params];
+}
+
+function av_library_url(array $filters, array $extra = []): string
+{
+    $params = [];
+    if ($filters['q'] !== '') {
+        $params['q'] = $filters['q'];
+    }
+    if ($filters['type'] !== 'all') {
+        $params['type'] = $filters['type'];
+    }
+    if ($filters['sort'] !== 'recent') {
+        $params['sort'] = $filters['sort'];
+    }
+    $params = array_merge($params, $extra);
+    return $params === [] ? './' : '?' . http_build_query($params);
+}
+
+function av_library_stats(PDO $db, int $ownerId): array
+{
+    $statement = $db->prepare(
+        "SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN mime_type LIKE 'image/%' THEN 1 ELSE 0 END), 0) AS images,
+                COALESCE(SUM(CASE WHEN mime_type LIKE 'video/%' THEN 1 ELSE 0 END), 0) AS videos,
+                COALESCE(SUM(size_bytes), 0) AS bytes
+         FROM media WHERE owner_id = ?"
+    );
+    $statement->execute([$ownerId]);
+    $row = $statement->fetch() ?: [];
+    $shares = $db->prepare(
+        'SELECT COUNT(*) FROM shares s JOIN media m ON m.id = s.media_id
+         WHERE m.owner_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?'
+    );
+    $shares->execute([$ownerId, av_utc_now()]);
+    return [
+        'total' => (int) ($row['total'] ?? 0),
+        'images' => (int) ($row['images'] ?? 0),
+        'videos' => (int) ($row['videos'] ?? 0),
+        'bytes' => (int) ($row['bytes'] ?? 0),
+        'shares' => (int) $shares->fetchColumn(),
+    ];
+}
+
+function av_media_extension(array $media): string
+{
+    return strtoupper(av_supported_media()[(string) ($media['mime_type'] ?? '')] ?? 'ARQ');
+}

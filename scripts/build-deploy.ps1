@@ -9,6 +9,10 @@ git rev-parse --verify --quiet "refs/tags/$Tag" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Tag $Tag não existe. Crie com: git tag -a $Tag -m $Tag" }
 
 if (Get-Command php -ErrorAction SilentlyContinue) {
+    foreach ($file in @('index.php', 'app/bootstrap.php', 'app/media.php', 'app/views.php', 'tests/smoke.php')) {
+        php -l $file | Out-Null
+        if ($LASTEXITCODE -ne 0) { php -l $file; throw "Erro de sintaxe em $file." }
+    }
     php tests/smoke.php
     if ($LASTEXITCODE -ne 0) { throw 'Teste de fumaça falhou.' }
 } else {

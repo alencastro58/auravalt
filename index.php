@@ -342,16 +342,31 @@ try {
         exit;
     }
 
+    if ($action === 'guide') {
+        av_render_guide($owner);
+        exit;
+    }
+
+    if ($action === 'security') {
+        av_render_security($owner);
+        exit;
+    }
+
+    $ownerId = (int) $owner['id'];
+    $filters = av_library_filters($_GET);
+    $stats = av_library_stats($db, $ownerId);
+    [$where, $whereParams] = av_library_where($filters, $ownerId);
     $page = max(1, (int) ($_GET['page'] ?? 1));
     $pageSize = 24;
-    $totalStatement = $db->prepare('SELECT COUNT(*) FROM media WHERE owner_id = ?');
-    $totalStatement->execute([(int) $owner['id']]);
+    $totalStatement = $db->prepare('SELECT COUNT(*) FROM media WHERE ' . $where);
+    $totalStatement->execute($whereParams);
     $total = (int) $totalStatement->fetchColumn();
     $pages = max(1, (int) ceil($total / $pageSize));
     $page = min($page, $pages);
     $offset = ($page - 1) * $pageSize;
-    $statement = $db->prepare('SELECT * FROM media WHERE owner_id = ? ORDER BY created_at DESC, id DESC LIMIT ' . $pageSize . ' OFFSET ' . $offset);
-    $statement->execute([(int) $owner['id']]);
+    $orderBy = av_library_sorts()[$filters['sort']]['sql'];
+    $statement = $db->prepare('SELECT * FROM media WHERE ' . $where . ' ORDER BY ' . $orderBy . ' LIMIT ' . $pageSize . ' OFFSET ' . $offset);
+    $statement->execute($whereParams);
     $items = $statement->fetchAll();
 
     $activeShares = [];
@@ -369,7 +384,7 @@ try {
         }
     }
 
-    av_render_library($owner, $items, $activeShares, $page, $pages, av_flash('notice'));
+    av_render_library($owner, $items, $activeShares, $page, $pages, $total, $filters, $stats, av_flash('notice'));
 } catch (Throwable $exception) {
     error_log('AuraVault request failed: ' . $exception->getMessage());
     av_render_failure('O servidor não conseguiu concluir essa solicitação. Confira a configuração do PHP e do banco de dados ou tente novamente.');

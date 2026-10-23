@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0
+
+- Nova interface escura: Dashboard de Mídias com painel lateral, miniaturas, faixa de link ativo e ações por card.
+- Busca por nome, filtro por tipo (fotos/vídeos) e ordenação (recentes, antigos, tamanho, nome), com paginação que preserva os filtros.
+- Contadores de mídias, links ativos e espaço usado.
+- Novas páginas para o titular: "Recursos e como usar" (`?action=guide`) e "Segurança e LGPD" (`?action=security`), separando recursos disponíveis dos em desenvolvimento.
+- Botão "Copiar link" ao criar link temporário.
+- Nenhuma fonte ou script de terceiros: a política de conteúdo continua restrita a `self`.
+- Testes de fumaça cobrem filtros, busca com curingas literais e estatísticas.
+
 ## v0.1.1
 
 - Segurança (C1): instalador exige chave `install.key` gravada fora do document root, bloqueia após 5 tentativas inválidas por 15 minutos e apaga a chave ao concluir. Sem a chave, exibe "Instalação bloqueada" (HTTP 403).

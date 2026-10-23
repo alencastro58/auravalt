@@ -1,0 +1,23 @@
+Options -Indexes
+DirectoryIndex index.php index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(app|tests|docs|scripts|dist)/ - [F,NC,L]
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+  RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:[0-9]+)?$ [NC]
+  RewriteCond %{HTTPS} !=on [OR]
+  RewriteCond %{HTTP_HOST} !^www\.auravault\.com\.br$ [NC]
+  RewriteRule ^ https://www.auravault.com.br%{REQUEST_URI} [R=301,L,NE]
+</IfModule>
+
+<FilesMatch "(?i)\.(md|txt|json|lock|log|sql|sqlite3?|db|bak|old|orig|swp|zip|tar|gz|ps1|sh|key|ini|env|dist|example)$|~$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+</IfModule>
