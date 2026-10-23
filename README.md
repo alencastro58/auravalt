@@ -1,4 +1,4 @@
-# AuraValt
+# AuraVault
 
 Cofre privado de fotos e vídeos para uma conta titular, com compartilhamento por link temporário e revogável.
 
@@ -12,10 +12,10 @@ Cofre privado de fotos e vídeos para uma conta titular, com compartilhamento po
 
 ## Desenvolvimento local
 
-No terminal, na pasta que contém `AuraValt/`, execute:
+No terminal, na pasta que contém `AuraVault/`, execute:
 
 ```powershell
-php -S 127.0.0.1:8080 -t AuraValt
+php -S 127.0.0.1:8080 -t AuraVault
 ```
 
 Abra `http://127.0.0.1:8080`. O instalador local permite HTTP somente em `localhost`/`127.0.0.1`; para produção, use HTTPS.
@@ -23,12 +23,12 @@ Abra `http://127.0.0.1:8080`. O instalador local permite HTTP somente em `localh
 Teste o schema SQLite e a validação dos links:
 
 ```powershell
-php AuraValt/tests/smoke.php
+php AuraVault/tests/smoke.php
 ```
 
 ## Publicação
 
-Siga o passo a passo em [docs/DEPLOY_HOSTGATOR.md](docs/DEPLOY_HOSTGATOR.md). O ZIP `AuraValt-HostGator.zip` contém os arquivos prontos para a raiz do domínio e o instalador cria o schema no primeiro acesso.
+Siga o passo a passo em [docs/DEPLOY_HOSTGATOR.md](docs/DEPLOY_HOSTGATOR.md). O ZIP `AuraVault-HostGator.zip` contém os arquivos prontos para a raiz do domínio e o instalador cria o schema no primeiro acesso.
 
 ## Privacidade
 

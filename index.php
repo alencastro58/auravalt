@@ -16,7 +16,7 @@ function av_install_post(): array
         'db_name' => trim((string) ($_POST['db_name'] ?? '')),
         'db_user' => trim((string) ($_POST['db_user'] ?? '')),
         'owner_email' => strtolower(trim((string) ($_POST['owner_email'] ?? ''))),
-        'base_url' => trim((string) ($_POST['base_url'] ?? 'https://www.auravalt.com.br')),
+        'base_url' => trim((string) ($_POST['base_url'] ?? 'https://www.auravault.com.br')),
     ];
     $databasePassword = (string) ($_POST['db_password'] ?? '');
     $ownerPassword = (string) ($_POST['owner_password'] ?? '');
@@ -28,7 +28,7 @@ function av_install_post(): array
         $errors[] = 'Informe um e-mail válido para o titular.';
     }
     if (strlen($ownerPassword) < 12) {
-        $errors[] = 'A senha do AuraValt deve ter pelo menos 12 caracteres.';
+        $errors[] = 'A senha do AuraVault deve ter pelo menos 12 caracteres.';
     }
     if (!preg_match('/^[A-Za-z0-9_.:\-]{1,190}$/', $old['db_host'])) {
         $errors[] = 'O servidor do banco contém caracteres inválidos.';
@@ -47,7 +47,7 @@ function av_install_post(): array
     $localHost = in_array(strtolower((string) ($url['host'] ?? '')), ['localhost', '127.0.0.1'], true);
     $validScheme = ($url['scheme'] ?? '') === 'https' || ($localHost && ($url['scheme'] ?? '') === 'http');
     if (!$validScheme || empty($url['host']) || isset($url['user']) || isset($url['pass']) || isset($url['query']) || isset($url['fragment']) || !in_array($url['path'] ?? '', ['', '/'], true)) {
-        $errors[] = 'Informe a URL pública do domínio com HTTPS, por exemplo https://www.auravalt.com.br.';
+        $errors[] = 'Informe a URL pública do domínio com HTTPS, por exemplo https://www.auravault.com.br.';
     }
 
     $requestHost = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
@@ -117,7 +117,7 @@ function av_install_post(): array
         if ($configWritten) {
             @unlink($configPath);
         }
-        error_log('AuraValt setup failed: ' . $exception->getMessage());
+        error_log('AuraVault setup failed: ' . $exception->getMessage());
         $errors[] = $exception instanceof PDOException
             ? 'Não foi possível conectar ou criar as tabelas. Confira servidor, banco, usuário, senha e privilégios no cPanel.'
             : 'Não foi possível concluir a instalação. Verifique as permissões para criar o armazenamento privado e consulte o log de erros PHP.';
@@ -342,6 +342,6 @@ try {
 
     av_render_library($owner, $items, $activeShares, $page, $pages, av_flash('notice'));
 } catch (Throwable $exception) {
-    error_log('AuraValt request failed: ' . $exception->getMessage());
+    error_log('AuraVault request failed: ' . $exception->getMessage());
     av_render_failure('O servidor não conseguiu concluir essa solicitação. Confira a configuração do PHP e do banco de dados ou tente novamente.');
 }

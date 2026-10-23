@@ -37,7 +37,7 @@ function av_load_config(): array
 {
     $config = require av_config_path();
     if (!is_array($config) || !isset($config['db'], $config['media_dir'], $config['base_url'])) {
-        throw new RuntimeException('Configuração do AuraValt inválida.');
+        throw new RuntimeException('Configuração do AuraVault inválida.');
     }
 
     return $config;

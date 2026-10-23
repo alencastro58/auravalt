@@ -96,7 +96,7 @@ function av_store_uploads(PDO $db, int $ownerId, array $upload, string $mediaDir
             $stored++;
         } catch (Throwable $exception) {
             @unlink($targetPath);
-            error_log('AuraValt: falha ao registrar upload: ' . $exception->getMessage());
+            error_log('AuraVault: falha ao registrar upload: ' . $exception->getMessage());
             $errors[] = $originalName . ': falha ao registrar o arquivo.';
         }
     }

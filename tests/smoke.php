@@ -42,4 +42,4 @@ $shareStatement = $db->prepare('UPDATE shares SET expires_at = ? WHERE token_has
 $shareStatement->execute([gmdate('Y-m-d H:i:s', time() - 60), hash('sha256', $token)]);
 check(av_find_share($db, $token) === null, 'Um link expirado ainda está acessível.');
 
-fwrite(STDOUT, "AuraValt smoke test: OK\n");
+fwrite(STDOUT, "AuraVault smoke test: OK\n");

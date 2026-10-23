@@ -10,12 +10,12 @@ function av_page_start(string $title): void
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <meta name="robots" content="noindex,nofollow,noarchive">
-      <title><?= av_e($title) ?> | AuraValt</title>
+      <title><?= av_e($title) ?> | AuraVault</title>
       <link rel="stylesheet" href="assets/style.css">
     </head>
     <body>
       <header class="topbar">
-        <a class="brand" href="./" aria-label="AuraValt, início"><span class="brand-mark">A</span><span>AuraValt</span></a>
+        <a class="brand" href="./" aria-label="AuraVault, início"><span class="brand-mark">A</span><span>AuraVault</span></a>
         <span class="topbar-caption">Cofre privado de mídia</span>
       </header>
       <main class="page-shell">
@@ -59,13 +59,13 @@ function av_render_setup(array $errors = [], array $old = []): void
           <legend>Titular e endereço</legend>
           <label for="owner_email">E-mail do titular</label>
           <input id="owner_email" name="owner_email" type="email" value="<?= av_e($old['owner_email'] ?? '') ?>" required autocomplete="email">
-          <label for="owner_password">Senha do AuraValt</label>
+          <label for="owner_password">Senha do AuraVault</label>
           <input id="owner_password" name="owner_password" type="password" minlength="12" required autocomplete="new-password">
           <small>Use pelo menos 12 caracteres e não reutilize a senha do cPanel.</small>
           <label for="base_url">URL pública com HTTPS</label>
-          <input id="base_url" name="base_url" type="url" value="<?= av_e($old['base_url'] ?? 'https://www.auravalt.com.br') ?>" required>
+          <input id="base_url" name="base_url" type="url" value="<?= av_e($old['base_url'] ?? 'https://www.auravault.com.br') ?>" required>
         </fieldset>
-        <button class="button button-primary" type="submit">Instalar AuraValt</button>
+        <button class="button button-primary" type="submit">Instalar AuraVault</button>
       </form>
       <p class="security-note">O instalador cria somente um titular. Não compartilhe as credenciais do banco nem deixe o site sem HTTPS.</p>
     </section>
@@ -229,7 +229,7 @@ function av_render_library(array $owner, array $media, array $activeShares, int 
         </nav>
       <?php endif; ?>
     <?php endif; ?>
-    <p class="data-note">Arquivos e banco ficam na sua conta HostGator. O AuraValt não criptografa mídias em repouso; use HTTPS e mantenha cópias de segurança protegidas.</p>
+    <p class="data-note">Arquivos e banco ficam na sua conta HostGator. O AuraVault não criptografa mídias em repouso; use HTTPS e mantenha cópias de segurança protegidas.</p>
     <?php
     av_page_end();
 }
@@ -283,7 +283,7 @@ function av_render_failure(string $message, int $status = 500): void
     av_page_start('Não foi possível concluir');
     ?>
     <section class="empty-state">
-      <p class="eyebrow">AURAVALT</p>
+      <p class="eyebrow">AURAVAULT</p>
       <h1>Não foi possível concluir</h1>
       <p><?= av_e($message) ?></p>
     </section>
