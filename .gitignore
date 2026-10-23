@@ -1,5 +1,8 @@
 **/config.php
+**/auravault_private/
 **/auravalt_private/
+**/install.key
+**/install.throttle
 **/media/
 **/*.sqlite
 **/*.sqlite3
@@ -8,6 +11,7 @@
 .env
 .env.*
 !.env.example
+dist/
 vendor/
 .DS_Store
 Thumbs.db

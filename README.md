@@ -1,40 +1,38 @@
 # AuraVault
 
-Cofre privado de fotos e vídeos para uma conta titular, com compartilhamento por link temporário e revogável.
+Cofre privado de fotos e vídeos em PHP 8.1, para uma conta titular, publicado em https://www.auravault.com.br (HostGator, cPanel).
 
-## Requisitos
+## Fonte única de verdade
 
-- PHP 8.1 ou superior.
-- PDO MySQL, `fileinfo`, OpenSSL e sessões PHP.
-- MySQL/MariaDB com permissão para criar tabelas no banco escolhido.
-- Apache com `.htaccess`/`mod_rewrite` na hospedagem HostGator.
-- HTTPS ativo no domínio antes de instalar.
+Este repositório Git é a única origem do código. Não edite arquivos diretamente no servidor nem mantenha cópias paralelas. Toda publicação sai de uma tag.
 
-## Desenvolvimento local
+## Estrutura
 
-No terminal, na pasta que contém `AuraVault/`, execute:
+- `index.php`: roteamento e instalador protegido por chave.
+- `app/`: inicialização, mídia e telas (bloqueado ao público).
+- `assets/`: CSS e JS.
+- `tests/smoke.php`: teste de fumaça (não vai para produção).
+- `scripts/`: geração do pacote e verificação da produção (não vão para produção).
+- `docs/DEPLOY_HOSTGATOR.md`: guia de publicação.
 
-```powershell
+## Rodar localmente
+
+Na pasta que contém `AuraVault/`:
+
+```
 php -S 127.0.0.1:8080 -t AuraVault
 ```
 
-Abra `http://127.0.0.1:8080`. O instalador local permite HTTP somente em `localhost`/`127.0.0.1`; para produção, use HTTPS.
+## Testar
 
-Teste o schema SQLite e a validação dos links:
-
-```powershell
+```
 php AuraVault/tests/smoke.php
 ```
 
-## Publicação
+## Publicar
 
-Siga o passo a passo em [docs/DEPLOY_HOSTGATOR.md](docs/DEPLOY_HOSTGATOR.md). O ZIP `AuraVault-HostGator.zip` contém os arquivos prontos para a raiz do domínio e o instalador cria o schema no primeiro acesso.
-
-## Privacidade
-
-- Não há registro público nem acesso público à biblioteca.
-- Mídias são guardadas fora do document root quando o diretório da conta permite.
-- Links compartilham somente uma mídia, expiram em 1, 7 ou 30 dias e podem ser revogados.
-- Tokens são aleatórios e armazenados no banco somente como hash.
-- O pacote não fornece criptografia de arquivos em repouso, antivírus, recuperação por e-mail ou armazenamento redundante.
-- Arquivos e backups continuam sob a responsabilidade da conta HostGator.
+1. `git status` limpo e testes passando.
+2. Registre a versão em `CHANGELOG.md`, faça o commit e crie a tag: `git tag -a v0.1.1 -m "v0.1.1"` e `git push --follow-tags`.
+3. Gere o pacote: `powershell -ExecutionPolicy Bypass -File scripts/build-deploy.ps1 -Tag v0.1.1`. O ZIP fica em `dist/`, sem testes, docs e scripts.
+4. Siga [docs/DEPLOY_HOSTGATOR.md](docs/DEPLOY_HOSTGATOR.md).
+5. Verifique: `powershell -ExecutionPolicy Bypass -File scripts/verify-production.ps1`.

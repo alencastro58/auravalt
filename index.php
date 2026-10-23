@@ -22,8 +22,24 @@ function av_install_post(): array
     $ownerPassword = (string) ($_POST['owner_password'] ?? '');
 
     if (!av_verify_csrf()) {
-        $errors[] = 'A sessão expirou. Recarregue a página e tente novamente.';
+        return [['A sessão expirou. Recarregue a página e tente novamente.'], $old];
     }
+
+    $keyPath = av_install_key_path();
+    $throttlePath = av_install_throttle_path();
+    $expectedKey = av_read_install_key($keyPath);
+    if ($expectedKey === null) {
+        return [['Instalador bloqueado: a chave de instalação não foi encontrada no servidor.'], $old];
+    }
+    if (av_install_throttled($throttlePath)) {
+        return [['Muitas tentativas com chave inválida. Aguarde 15 minutos.'], $old];
+    }
+    if (!av_install_key_matches($expectedKey, (string) ($_POST['install_key'] ?? ''))) {
+        av_install_register_failure($throttlePath);
+        error_log('AuraVault setup: chave de instalação inválida de ' . ($_SERVER['REMOTE_ADDR'] ?? '?'));
+        return [['Chave de instalação inválida.'], $old];
+    }
+
     if (!filter_var($old['owner_email'], FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Informe um e-mail válido para o titular.';
     }
@@ -102,6 +118,10 @@ function av_install_post(): array
             throw new RuntimeException('Não foi possível salvar a configuração privada.');
         }
         @chmod($temporaryConfig, 0600);
+        if (is_file($configPath)) {
+            @unlink($temporaryConfig);
+            throw new RuntimeException('Instalação concluída por outra requisição.');
+        }
         if (!rename($temporaryConfig, $configPath)) {
             @unlink($temporaryConfig);
             throw new RuntimeException('Não foi possível ativar a configuração privada.');
@@ -111,7 +131,11 @@ function av_install_post(): array
 
         $statement = $db->prepare('INSERT INTO owners (email, password_hash) VALUES (?, ?)');
         $statement->execute([$old['owner_email'], password_hash($ownerPassword, PASSWORD_DEFAULT)]);
-        av_flash('notice', ['type' => 'success', 'message' => 'Instalação concluída. Entre com o e-mail e a senha do titular.']);
+        $keyRemoved = @unlink($keyPath);
+        @unlink($throttlePath);
+        av_flash('notice', $keyRemoved
+            ? ['type' => 'success', 'message' => 'Instalação concluída e chave de instalação removida. Entre com o e-mail e a senha do titular.']
+            : ['type' => 'error', 'message' => 'Instalação concluída, mas o arquivo install.key não pôde ser removido. Apague-o agora pelo cPanel.']);
         return [[], []];
     } catch (Throwable $exception) {
         if ($configWritten) {
@@ -127,6 +151,11 @@ function av_install_post(): array
 
 try {
     if (!av_is_installed()) {
+        if (av_read_install_key(av_install_key_path()) === null) {
+            http_response_code(403);
+            av_render_setup_locked();
+            exit;
+        }
         $errors = [];
         $old = [];
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {

@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+
+# Fora do pacote de produção (git archive)
+/tests export-ignore
+/docs export-ignore
+/scripts export-ignore
+/README.md export-ignore
+/CHANGELOG.md export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore

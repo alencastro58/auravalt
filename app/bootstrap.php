@@ -15,17 +15,64 @@ function av_private_dir(): string
     $directory = $documentRoot;
     while ($directory !== dirname($directory)) {
         if (strtolower(basename($directory)) === 'public_html') {
-            return dirname($directory) . DIRECTORY_SEPARATOR . 'auravalt_private';
+            return dirname($directory) . DIRECTORY_SEPARATOR . 'auravault_private';
         }
         $directory = dirname($directory);
     }
 
-    return dirname($documentRoot) . DIRECTORY_SEPARATOR . 'auravalt_private';
+    return dirname($documentRoot) . DIRECTORY_SEPARATOR . 'auravault_private';
 }
 
 function av_config_path(): string
 {
     return av_private_dir() . DIRECTORY_SEPARATOR . 'config.php';
+}
+
+function av_install_key_path(): string
+{
+    return av_private_dir() . DIRECTORY_SEPARATOR . 'install.key';
+}
+
+function av_install_throttle_path(): string
+{
+    return av_private_dir() . DIRECTORY_SEPARATOR . 'install.throttle';
+}
+
+/**
+ * Lê a chave de instalação criada pelo responsável via cPanel, fora do document root.
+ * Retorna null se o arquivo não existir ou se a chave tiver menos de 32 caracteres.
+ */
+function av_read_install_key(string $path): ?string
+{
+    if (!is_file($path) || !is_readable($path)) {
+        return null;
+    }
+    $key = trim((string) file_get_contents($path, false, null, 0, 1024));
+    return strlen($key) >= 32 ? $key : null;
+}
+
+function av_install_key_matches(string $expected, string $submitted): bool
+{
+    return hash_equals(hash('sha256', $expected), hash('sha256', trim($submitted)));
+}
+
+function av_install_throttled(string $path): bool
+{
+    $data = json_decode((string) @file_get_contents($path), true);
+    return is_array($data) && (int) ($data['until'] ?? 0) > time();
+}
+
+function av_install_register_failure(string $path): void
+{
+    $data = json_decode((string) @file_get_contents($path), true);
+    $fails = (is_array($data) ? (int) ($data['fails'] ?? 0) : 0) + 1;
+    $until = 0;
+    if ($fails >= 5) {
+        $fails = 0;
+        $until = time() + 900;
+    }
+    @file_put_contents($path, json_encode(['fails' => $fails, 'until' => $until]), LOCK_EX);
+    @chmod($path, 0600);
 }
 
 function av_is_installed(): bool
@@ -152,7 +199,7 @@ function av_start_session(): void
         return;
     }
 
-    session_name('AURAVALTSESSID');
+    session_name('AURAVAULTSESSID');
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => '/',

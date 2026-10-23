@@ -42,4 +42,26 @@ $shareStatement = $db->prepare('UPDATE shares SET expires_at = ? WHERE token_has
 $shareStatement->execute([gmdate('Y-m-d H:i:s', time() - 60), hash('sha256', $token)]);
 check(av_find_share($db, $token) === null, 'Um link expirado ainda está acessível.');
 
+$keyFile = tempnam(sys_get_temp_dir(), 'avkey');
+check(av_read_install_key($keyFile . '.inexistente') === null, 'Instalador liberado sem install.key.');
+file_put_contents($keyFile, "curta\n");
+check(av_read_install_key($keyFile) === null, 'Chave de instalação curta foi aceita.');
+$installKey = bin2hex(random_bytes(32));
+file_put_contents($keyFile, $installKey . "\r\n");
+check(av_read_install_key($keyFile) === $installKey, 'Chave de instalação válida não foi lida.');
+check(av_install_key_matches($installKey, $installKey), 'Chave correta foi recusada.');
+check(!av_install_key_matches($installKey, ''), 'Chave vazia foi aceita.');
+check(!av_install_key_matches($installKey, strtoupper($installKey)), 'Chave diferente foi aceita.');
+unlink($keyFile);
+
+$throttleFile = tempnam(sys_get_temp_dir(), 'avthr');
+unlink($throttleFile);
+for ($i = 0; $i < 4; $i++) {
+    av_install_register_failure($throttleFile);
+}
+check(!av_install_throttled($throttleFile), 'Bloqueio antes da quinta tentativa.');
+av_install_register_failure($throttleFile);
+check(av_install_throttled($throttleFile), 'Cinco chaves inválidas não bloquearam o instalador.');
+unlink($throttleFile);
+
 fwrite(STDOUT, "AuraVault smoke test: OK\n");

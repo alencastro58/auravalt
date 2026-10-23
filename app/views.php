@@ -45,6 +45,12 @@ function av_render_setup(array $errors = [], array $old = []): void
       <form method="post" class="stack-form" autocomplete="on">
         <?= av_csrf_field() ?>
         <fieldset>
+          <legend>Autorização</legend>
+          <label for="install_key">Chave de instalação</label>
+          <input id="install_key" name="install_key" type="password" required autocomplete="off" spellcheck="false">
+          <small>Conteúdo do arquivo install.key criado por você no cPanel. Ele é apagado ao final.</small>
+        </fieldset>
+        <fieldset>
           <legend>Banco MySQL do cPanel</legend>
           <label for="db_host">Servidor do banco</label>
           <input id="db_host" name="db_host" value="<?= av_e($old['db_host'] ?? 'localhost') ?>" required autocomplete="off">
@@ -68,6 +74,20 @@ function av_render_setup(array $errors = [], array $old = []): void
         <button class="button button-primary" type="submit">Instalar AuraVault</button>
       </form>
       <p class="security-note">O instalador cria somente um titular. Não compartilhe as credenciais do banco nem deixe o site sem HTTPS.</p>
+    </section>
+    <?php
+    av_page_end();
+}
+
+function av_render_setup_locked(): void
+{
+    av_page_start('Instalação bloqueada');
+    ?>
+    <section class="auth-panel setup-panel">
+      <p class="eyebrow">INSTALAÇÃO BLOQUEADA</p>
+      <h1>Cofre ainda não configurado</h1>
+      <p class="lede">A instalação só é liberada para o responsável pela hospedagem, mediante chave gravada no servidor.</p>
+      <p class="security-note">Se você é o responsável, siga a seção “Chave de instalação” do guia de publicação.</p>
     </section>
     <?php
     av_page_end();
