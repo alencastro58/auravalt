@@ -15,3 +15,6 @@ dist/
 vendor/
 .DS_Store
 Thumbs.db
+_tmp/
+AuraVault diagnosis and security plan/
+*.zip
