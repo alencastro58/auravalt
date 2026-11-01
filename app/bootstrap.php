@@ -1,12 +1,41 @@
 <?php
 declare(strict_types=1);
 
+const AV_VERSION = '0.2.1';
 const AV_MAX_UPLOAD_BYTES = 104857600;
 
 date_default_timezone_set('UTC');
 
+function av_request_id(): string
+{
+    static $id;
+    return $id ??= bin2hex(random_bytes(4));
+}
+
+/**
+ * Registra um evento no log de erros do PHP com ID da requisição. Nunca passe segredos em $context.
+ */
+function av_log(string $event, array $context = []): void
+{
+    $line = 'AuraVault [' . av_request_id() . '] ' . $event;
+    if ($context !== []) {
+        $line .= ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    error_log($line);
+}
+
+function av_client_ip(): string
+{
+    return (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+}
+
 function av_private_dir(): string
 {
+    $override = getenv('AURAVAULT_PRIVATE_DIR');
+    if (is_string($override) && $override !== '') {
+        return rtrim($override, '/\\');
+    }
+
     $documentRoot = realpath($_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__));
     if ($documentRoot === false) {
         $documentRoot = dirname(__DIR__);
@@ -94,10 +123,12 @@ function av_connect_database(array $database): PDO
 {
     if (($database['driver'] ?? 'mysql') === 'sqlite') {
         $dsn = 'sqlite:' . $database['path'];
-        return new PDO($dsn, null, null, [
+        $pdo = new PDO($dsn, null, null, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]);
+        $pdo->exec('PRAGMA foreign_keys = ON');
+        return $pdo;
     }
 
     $dsn = sprintf(
@@ -106,11 +137,15 @@ function av_connect_database(array $database): PDO
         $database['name']
     );
 
-    return new PDO($dsn, $database['user'], $database['password'], [
+    $pdo = new PDO($dsn, $database['user'], $database['password'], [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
+    // Datas são gravadas e lidas como UTC; TIMESTAMP segue o fuso da sessão.
+    $pdo->exec("SET time_zone = '+00:00'");
+
+    return $pdo;
 }
 
 function av_db(): PDO
@@ -119,6 +154,7 @@ function av_db(): PDO
     if (!$connection instanceof PDO) {
         $config = av_load_config();
         $connection = av_connect_database($config['db']);
+        av_migrate($connection);
     }
 
     return $connection;
@@ -126,7 +162,75 @@ function av_db(): PDO
 
 function av_create_schema(PDO $db): void
 {
-    if ($db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+    av_migrate($db);
+}
+
+/**
+ * Migrações numeradas e idempotentes. A v1 é o esquema original (CREATE IF NOT EXISTS),
+ * por isso é segura em bancos já instalados.
+ */
+function av_migrations(string $driver): array
+{
+    $sqlite = $driver === 'sqlite';
+
+    return [
+        1 => av_baseline_statements($driver),
+        2 => $sqlite
+            ? [
+                'CREATE TABLE IF NOT EXISTS login_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip_hash TEXT NOT NULL,
+                    email_hash TEXT NOT NULL,
+                    attempted_at TEXT NOT NULL
+                )',
+                'CREATE INDEX IF NOT EXISTS login_attempts_ip ON login_attempts(ip_hash, attempted_at)',
+                'CREATE INDEX IF NOT EXISTS login_attempts_email ON login_attempts(email_hash, attempted_at)',
+            ]
+            : [
+                'CREATE TABLE IF NOT EXISTS login_attempts (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    ip_hash CHAR(64) NOT NULL,
+                    email_hash CHAR(64) NOT NULL,
+                    attempted_at DATETIME NOT NULL,
+                    INDEX login_attempts_ip (ip_hash, attempted_at),
+                    INDEX login_attempts_email (email_hash, attempted_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
+            ],
+    ];
+}
+
+function av_migrate(PDO $db): void
+{
+    try {
+        $current = (int) $db->query('SELECT COALESCE(MAX(version), 0) FROM schema_migrations')->fetchColumn();
+    } catch (PDOException) {
+        $db->exec('CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER NOT NULL PRIMARY KEY,
+            applied_at VARCHAR(19) NOT NULL
+        )');
+        $current = 0;
+    }
+
+    foreach (av_migrations((string) $db->getAttribute(PDO::ATTR_DRIVER_NAME)) as $version => $statements) {
+        if ($version <= $current) {
+            continue;
+        }
+        foreach ($statements as $statement) {
+            $db->exec($statement);
+        }
+        try {
+            $db->prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+                ->execute([$version, av_utc_now()]);
+        } catch (PDOException) {
+            // Outra requisição aplicou a mesma migração; as instruções são idempotentes.
+        }
+        av_log('migration applied', ['version' => $version]);
+    }
+}
+
+function av_baseline_statements(string $driver): array
+{
+    if ($driver === 'sqlite') {
         $statements = [
             'CREATE TABLE IF NOT EXISTS owners (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,9 +292,12 @@ function av_create_schema(PDO $db): void
         ];
     }
 
-    foreach ($statements as $statement) {
-        $db->exec($statement);
-    }
+    return $statements;
+}
+
+function av_is_https(): bool
+{
+    return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
 }
 
 function av_start_session(): void
@@ -200,10 +307,11 @@ function av_start_session(): void
     }
 
     session_name('AURAVAULTSESSID');
+    session_cache_limiter('');
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => '/',
-        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'secure' => av_is_https(),
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
@@ -217,6 +325,10 @@ function av_security_headers(): void
     header('X-Frame-Options: DENY');
     header('Referrer-Policy: no-referrer');
     header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    header('Cross-Origin-Resource-Policy: same-origin');
+    if (av_is_https()) {
+        header('Strict-Transport-Security: max-age=31536000');
+    }
     header("Content-Security-Policy: default-src 'self'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
     header('X-Robots-Tag: noindex, nofollow, noarchive');
 }

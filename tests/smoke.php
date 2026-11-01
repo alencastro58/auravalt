@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/bootstrap.php';
+require dirname(__DIR__) . '/app/auth.php';
 require dirname(__DIR__) . '/app/media.php';
 
 function check(bool $condition, string $message): void
@@ -80,5 +81,65 @@ check((int) $count->fetchColumn() === 0, 'Curinga % na busca retornou resultados
 $stats = av_library_stats($db, $ownerId);
 check($stats['videos'] === 1 && $stats['total'] === $stats['images'] + $stats['videos'], 'Estatísticas da biblioteca incorretas.');
 check(av_library_url(['type' => 'all', 'sort' => 'recent', 'q' => '']) === './', 'URL da biblioteca sem filtros incorreta.');
+
+// Migrações e throttle de login no servidor
+check((int) $db->query('SELECT MAX(version) FROM schema_migrations')->fetchColumn() === 2, 'Migrações não foram aplicadas.');
+av_migrate($db);
+check((int) $db->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn() === 2, 'Migrações não são idempotentes.');
+
+$now = 1_800_000_000;
+$ip = '203.0.113.9';
+for ($i = 0; $i < AV_LOGIN_MAX_PER_PAIR; $i++) {
+    check(av_login_begin_attempt($db, $ip, 'titular@example.test', $now), 'Tentativa ' . ($i + 1) . ' bloqueada antes do limite.');
+}
+check(!av_login_begin_attempt($db, $ip, 'titular@example.test', $now), 'Limite por IP+e-mail não bloqueou a tentativa seguinte.');
+check(av_login_throttled($db, $ip, 'TITULAR@example.test', $now), 'Bloqueio não ignora maiúsculas no e-mail.');
+check(!av_login_throttled($db, '198.51.100.1', 'outro@example.test', $now), 'Bloqueio atingiu IP e e-mail não relacionados.');
+check(!av_login_throttled($db, $ip, 'titular@example.test', $now + AV_LOGIN_WINDOW_SECONDS + 1), 'Bloqueio não expirou.');
+av_login_clear($db, $ip, 'titular@example.test');
+check(!av_login_throttled($db, $ip, 'titular@example.test', $now), 'Sucesso não limpou as tentativas.');
+for ($i = 0; $i < AV_LOGIN_MAX_PER_IP; $i++) {
+    av_login_register_failure($db, $ip, 'e' . $i . '@example.test', $now);
+}
+check(!av_login_begin_attempt($db, $ip, 'novo@example.test', $now), 'Limite por IP não bloqueou e-mails diferentes.');
+$db->exec('DELETE FROM login_attempts');
+
+check(av_login_verify($db, 'titular@example.test', 'uma-senha-de-teste') === $ownerId, 'Login válido foi recusado.');
+check(av_login_verify($db, 'titular@example.test', 'errada') === null, 'Senha errada foi aceita.');
+check(av_login_verify($db, 'ninguem@example.test', 'uma-senha-de-teste') === null, 'E-mail inexistente foi aceito.');
+
+check(av_password_errors('curta') !== [], 'Senha curta foi aceita.');
+check(av_password_errors('aaaaaaaaaaaaaaaa') !== [], 'Senha sem variedade foi aceita.');
+check(av_password_errors('uma frase longa e boa') === [], 'Senha forte foi recusada.');
+check(av_change_password($db, $ownerId, 'errada', 'nova senha bem longa') !== [], 'Troca com senha atual errada foi aceita.');
+check(av_change_password($db, $ownerId, 'uma-senha-de-teste', 'nova senha bem longa') === [], 'Troca de senha válida falhou.');
+check(av_login_verify($db, 'titular@example.test', 'nova senha bem longa') === $ownerId, 'Nova senha não funciona.');
+
+// Limpeza de links antigos
+$old = gmdate('Y-m-d H:i:s', time() - 40 * 86400);
+$db->prepare('INSERT INTO shares (id, media_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
+    ->execute([bin2hex(random_bytes(16)), $mediaId, hash('sha256', 'velho'), $old]);
+check(av_purge_old_shares($db) === 1, 'Link vencido há mais de 30 dias não foi removido.');
+
+// Limites de upload, nomes e miniaturas
+check(av_ini_bytes('100M') === 104857600 && av_ini_bytes('2G') === 2147483648 && av_ini_bytes('512K') === 524288, 'Conversão de limites do PHP incorreta.');
+check(av_effective_upload_limit() <= AV_MAX_UPLOAD_BYTES, 'Limite efetivo maior que o do aplicativo.');
+check(av_ascii_filename("fóto de férias\r\n.jpg") === 'f_to_de_f_rias_.jpg', 'Nome ASCII do download incorreto.');
+check(av_ascii_filename('???') === 'media', 'Nome ASCII vazio sem fallback.');
+check(av_valid_stored_name(str_repeat('a', 48) . '.jpg') && !av_valid_stored_name('../' . str_repeat('a', 48) . '.jpg'), 'Validação do nome armazenado incorreta.');
+
+if (av_thumbnails_available()) {
+    $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'avthumb' . bin2hex(random_bytes(4));
+    mkdir($dir);
+    $image = imagecreatetruecolor(1200, 800);
+    imagepng($image, $dir . '/src.png');
+    check(av_make_thumbnail($dir . '/src.png', 'image/png', $dir . '/out.jpg'), 'Miniatura não foi gerada.');
+    $size = getimagesize($dir . '/out.jpg');
+    check($size !== false && $size[0] === AV_THUMB_WIDTH && $size['mime'] === 'image/jpeg', 'Miniatura com tamanho ou formato incorreto.');
+    file_put_contents($dir . '/fake.png', 'isto não é uma imagem');
+    check(!av_make_thumbnail($dir . '/fake.png', 'image/png', $dir . '/fake.jpg'), 'Arquivo inválido gerou miniatura.');
+    array_map('unlink', glob($dir . '/*'));
+    rmdir($dir);
+}
 
 fwrite(STDOUT, "AuraVault smoke test: OK\n");
