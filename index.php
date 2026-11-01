@@ -2,10 +2,16 @@
 declare(strict_types=1);
 
 require __DIR__ . '/app/bootstrap.php';
+require __DIR__ . '/app/auth.php';
 require __DIR__ . '/app/media.php';
 require __DIR__ . '/app/views.php';
 
-av_start_session();
+$action = (string) ($_GET['action'] ?? 'library');
+// Links públicos não precisam de sessão nem de cookie.
+$isPublicShare = $action === 'shared' || ($action === 'file' && (string) ($_GET['token'] ?? '') !== '');
+if (!$isPublicShare) {
+    av_start_session();
+}
 av_security_headers();
 
 function av_install_post(): array
@@ -36,16 +42,14 @@ function av_install_post(): array
     }
     if (!av_install_key_matches($expectedKey, (string) ($_POST['install_key'] ?? ''))) {
         av_install_register_failure($throttlePath);
-        error_log('AuraVault setup: chave de instalação inválida de ' . ($_SERVER['REMOTE_ADDR'] ?? '?'));
+        av_log('setup: invalid install key', ['ip' => av_client_ip()]);
         return [['Chave de instalação inválida.'], $old];
     }
 
     if (!filter_var($old['owner_email'], FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Informe um e-mail válido para o titular.';
     }
-    if (strlen($ownerPassword) < 12) {
-        $errors[] = 'A senha do AuraVault deve ter pelo menos 12 caracteres.';
-    }
+    $errors = [...$errors, ...av_password_errors($ownerPassword, $old['owner_email'])];
     if (!preg_match('/^[A-Za-z0-9_.:\-]{1,190}$/', $old['db_host'])) {
         $errors[] = 'O servidor do banco contém caracteres inválidos.';
     }
@@ -66,9 +70,9 @@ function av_install_post(): array
         $errors[] = 'Informe a URL pública do domínio com HTTPS, por exemplo https://www.auravault.com.br.';
     }
 
-    $requestHost = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
-    $isLocalRequest = in_array(explode(':', $requestHost)[0], ['localhost', '127.0.0.1'], true);
-    $isSecureRequest = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $requestHost = strtolower((string) ($_SERVER['SERVER_NAME'] ?? ''));
+    $isLocalRequest = in_array($requestHost, ['localhost', '127.0.0.1'], true);
+    $isSecureRequest = av_is_https();
     if (!$isLocalRequest && !$isSecureRequest) {
         $errors[] = 'Ative o certificado SSL e acesse o instalador por HTTPS antes de informar credenciais.';
     }
@@ -141,7 +145,7 @@ function av_install_post(): array
         if ($configWritten) {
             @unlink($configPath);
         }
-        error_log('AuraVault setup failed: ' . $exception->getMessage());
+        av_log('setup failed', ['error' => $exception->getMessage()]);
         $errors[] = $exception instanceof PDOException
             ? 'Não foi possível conectar ou criar as tabelas. Confira servidor, banco, usuário, senha e privilégios no cPanel.'
             : 'Não foi possível concluir a instalação. Verifique as permissões para criar o armazenamento privado e consulte o log de erros PHP.';
@@ -170,7 +174,6 @@ try {
 
     $config = av_load_config();
     $db = av_db();
-    $action = (string) ($_GET['action'] ?? 'library');
 
     if ($action === 'shared') {
         $token = (string) ($_GET['token'] ?? '');
@@ -185,6 +188,20 @@ try {
     }
 
     $owner = av_owner($db);
+
+    if ($action === 'thumb') {
+        if (!$owner) {
+            http_response_code(403);
+            exit;
+        }
+        $media = av_find_media($db, (string) ($_GET['id'] ?? ''), (int) $owner['id']);
+        if (!$media) {
+            http_response_code(404);
+            exit;
+        }
+        session_write_close();
+        av_serve_thumbnail($media, $config['media_dir']);
+    }
 
     if ($action === 'file') {
         $token = (string) ($_GET['token'] ?? '');
@@ -209,28 +226,24 @@ try {
         $email = '';
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $email = strtolower(trim((string) ($_POST['email'] ?? '')));
+            $ip = av_client_ip();
             if (!av_verify_csrf()) {
                 $errors[] = 'A sessão expirou. Recarregue a página.';
-            } elseif ((int) ($_SESSION['login_locked_until'] ?? 0) > time()) {
+            } elseif (!av_login_begin_attempt($db, $ip, $email)) {
+                av_log('login blocked', ['ip' => $ip]);
                 $errors[] = 'Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.';
             } else {
-                $statement = $db->prepare('SELECT id, password_hash FROM owners WHERE email = ?');
-                $statement->execute([$email]);
-                $record = $statement->fetch();
-                if ($record && password_verify((string) ($_POST['password'] ?? ''), $record['password_hash'])) {
+                $ownerId = av_login_verify($db, $email, (string) ($_POST['password'] ?? ''));
+                if ($ownerId !== null) {
+                    av_login_clear($db, $ip, $email);
+                    av_purge_old_shares($db);
                     session_regenerate_id(true);
-                    $_SESSION['owner_id'] = (int) $record['id'];
+                    $_SESSION['owner_id'] = $ownerId;
                     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-                    unset($_SESSION['login_attempts'], $_SESSION['login_locked_until']);
                     av_redirect('./');
                 }
 
-                $attempts = (int) ($_SESSION['login_attempts'] ?? 0) + 1;
-                $_SESSION['login_attempts'] = $attempts;
-                if ($attempts >= 5) {
-                    $_SESSION['login_locked_until'] = time() + 900;
-                    $_SESSION['login_attempts'] = 0;
-                }
+                av_log('login failed', ['ip' => $ip]);
                 $errors[] = 'E-mail ou senha incorretos.';
             }
         }
@@ -291,6 +304,7 @@ try {
                 $expiresAt = gmdate('Y-m-d H:i:s', time() + ($days * 86400));
                 $statement = $db->prepare('INSERT INTO shares (id, media_id, token_hash, expires_at) VALUES (?, ?, ?, ?)');
                 $statement->execute([bin2hex(random_bytes(16)), $media['id'], hash('sha256', $token), $expiresAt]);
+                av_log('share created', ['media' => $media['id'], 'days' => $days]);
                 $shareUrl = $config['base_url'] . '/?action=shared&token=' . rawurlencode($token);
                 av_flash('notice', [
                     'type' => 'success',
@@ -318,17 +332,40 @@ try {
                 av_redirect('./');
             }
 
-            $db->beginTransaction();
             $statement = $db->prepare('DELETE FROM media WHERE id = ? AND owner_id = ?');
             $statement->execute([$media['id'], $ownerId]);
-            $db->commit();
             $path = $config['media_dir'] . DIRECTORY_SEPARATOR . $media['stored_name'];
-            if (is_file($path)) {
-                @unlink($path);
+            if (is_file($path) && !@unlink($path)) {
+                av_log('media file not removed', ['media' => $media['id']]);
             }
+            av_delete_thumbnail($config['media_dir'], $media['id']);
+            av_log('media deleted', ['media' => $media['id']]);
             av_flash('notice', ['type' => 'success', 'message' => 'Arquivo e links associados excluídos.']);
             av_redirect('./');
         }
+
+        if ($action === 'password') {
+            $current = (string) ($_POST['current_password'] ?? '');
+            $new = (string) ($_POST['new_password'] ?? '');
+            if (!hash_equals($new, (string) ($_POST['confirm_password'] ?? ''))) {
+                $passwordErrors = ['A confirmação não confere com a nova senha.'];
+            } else {
+                $passwordErrors = av_change_password($db, $ownerId, $current, $new);
+            }
+            if ($passwordErrors === []) {
+                session_regenerate_id(true);
+                av_log('password changed', ['owner' => $ownerId]);
+                av_flash('notice', ['type' => 'success', 'message' => 'Senha alterada com sucesso.']);
+            } else {
+                av_flash('notice', ['type' => 'error', 'message' => implode(' ', $passwordErrors)]);
+            }
+            av_redirect('?action=account');
+        }
+    }
+
+    if ($action === 'account') {
+        av_render_account($owner, av_flash('notice'));
+        exit;
     }
 
     if ($action === 'view') {
@@ -365,7 +402,7 @@ try {
     $page = min($page, $pages);
     $offset = ($page - 1) * $pageSize;
     $orderBy = av_library_sorts()[$filters['sort']]['sql'];
-    $statement = $db->prepare('SELECT * FROM media WHERE ' . $where . ' ORDER BY ' . $orderBy . ' LIMIT ' . $pageSize . ' OFFSET ' . $offset);
+    $statement = $db->prepare('SELECT ' . AV_MEDIA_COLUMNS . ' FROM media WHERE ' . $where . ' ORDER BY ' . $orderBy . ' LIMIT ' . $pageSize . ' OFFSET ' . $offset);
     $statement->execute($whereParams);
     $items = $statement->fetchAll();
 
@@ -386,6 +423,9 @@ try {
 
     av_render_library($owner, $items, $activeShares, $page, $pages, $total, $filters, $stats, av_flash('notice'));
 } catch (Throwable $exception) {
-    error_log('AuraVault request failed: ' . $exception->getMessage());
+    av_log('request failed', [
+        'error' => $exception->getMessage(),
+        'at' => basename($exception->getFile()) . ':' . $exception->getLine(),
+    ]);
     av_render_failure('O servidor não conseguiu concluir essa solicitação. Confira a configuração do PHP e do banco de dados ou tente novamente.');
 }

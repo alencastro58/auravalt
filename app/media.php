@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 
+const AV_MEDIA_COLUMNS = 'id, owner_id, stored_name, original_name, mime_type, size_bytes, created_at';
+const AV_THUMB_WIDTH = 480;
+
 function av_supported_media(): array
 {
     return [
@@ -96,7 +99,7 @@ function av_store_uploads(PDO $db, int $ownerId, array $upload, string $mediaDir
             $stored++;
         } catch (Throwable $exception) {
             @unlink($targetPath);
-            error_log('AuraVault: falha ao registrar upload: ' . $exception->getMessage());
+            av_log('upload registration failed', ['error' => $exception->getMessage()]);
             $errors[] = $originalName . ': falha ao registrar o arquivo.';
         }
     }
@@ -124,7 +127,7 @@ function av_find_media(PDO $db, string $id, int $ownerId): ?array
         return null;
     }
 
-    $statement = $db->prepare('SELECT * FROM media WHERE id = ? AND owner_id = ?');
+    $statement = $db->prepare('SELECT ' . AV_MEDIA_COLUMNS . ' FROM media WHERE id = ? AND owner_id = ?');
     $statement->execute([$id, $ownerId]);
     $media = $statement->fetch();
 
@@ -138,7 +141,8 @@ function av_find_share(PDO $db, string $token): ?array
     }
 
     $statement = $db->prepare(
-        'SELECT media.*, shares.expires_at AS share_expires_at
+        'SELECT media.id, media.owner_id, media.stored_name, media.original_name, media.mime_type,
+                media.size_bytes, media.created_at, shares.expires_at AS share_expires_at
          FROM shares
          INNER JOIN media ON media.id = shares.media_id
          WHERE shares.token_hash = ? AND shares.revoked_at IS NULL AND shares.expires_at > ?'
@@ -149,10 +153,199 @@ function av_find_share(PDO $db, string $token): ?array
     return $media ?: null;
 }
 
+function av_ini_bytes(string $value): int
+{
+    $value = trim($value);
+    if ($value === '' || !preg_match('/^(-?\d+)\s*([kmg]?)b?$/i', $value, $m)) {
+        return 0;
+    }
+    $bytes = (int) $m[1];
+    return match (strtolower($m[2])) {
+        'g' => $bytes * 1073741824,
+        'm' => $bytes * 1048576,
+        'k' => $bytes * 1024,
+        default => $bytes,
+    };
+}
+
+/**
+ * Menor entre o limite do app e os limites reais do PHP no servidor.
+ */
+function av_effective_upload_limit(): int
+{
+    $limit = AV_MAX_UPLOAD_BYTES;
+    foreach (['upload_max_filesize', 'post_max_size'] as $setting) {
+        $bytes = av_ini_bytes((string) ini_get($setting));
+        if ($bytes > 0) {
+            $limit = min($limit, $bytes);
+        }
+    }
+
+    return $limit;
+}
+
+function av_ascii_filename(string $name): string
+{
+    $ascii = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name) ?? '';
+    $ascii = trim($ascii, '._');
+
+    return $ascii === '' ? 'media' : substr($ascii, 0, 100);
+}
+
+function av_valid_stored_name(string $storedName): bool
+{
+    return (bool) preg_match('/^[a-f0-9]{48}\.(jpg|png|gif|webp|mp4|webm|mov)$/', $storedName);
+}
+
+function av_thumbs_dir(string $mediaDirectory): string
+{
+    return dirname($mediaDirectory) . DIRECTORY_SEPARATOR . 'thumbs';
+}
+
+function av_thumb_path(string $mediaDirectory, string $mediaId): string
+{
+    return av_thumbs_dir($mediaDirectory) . DIRECTORY_SEPARATOR . $mediaId . '.jpg';
+}
+
+function av_thumbnails_available(): bool
+{
+    return extension_loaded('gd') && function_exists('imagejpeg') && function_exists('imagecreatefromjpeg');
+}
+
+function av_delete_thumbnail(string $mediaDirectory, string $mediaId): void
+{
+    if (!preg_match('/^[a-f0-9]{32}$/', $mediaId)) {
+        return;
+    }
+    $path = av_thumb_path($mediaDirectory, $mediaId);
+    if (is_file($path)) {
+        @unlink($path);
+    }
+}
+
+/**
+ * Gera uma miniatura JPEG (sem metadados). Retorna false se não for possível gerar com segurança.
+ */
+function av_make_thumbnail(string $source, string $mimeType, string $target): bool
+{
+    if (!av_thumbnails_available()) {
+        return false;
+    }
+    $loader = match ($mimeType) {
+        'image/jpeg' => 'imagecreatefromjpeg',
+        'image/png' => 'imagecreatefrompng',
+        'image/gif' => 'imagecreatefromgif',
+        'image/webp' => 'imagecreatefromwebp',
+        default => null,
+    };
+    if ($loader === null || !function_exists($loader)) {
+        return false;
+    }
+
+    $info = @getimagesize($source);
+    if ($info === false || $info[0] < 1 || $info[1] < 1) {
+        return false;
+    }
+    [$width, $height] = $info;
+
+    // O GD decodifica a imagem inteira em memória (~5 bytes por pixel).
+    $memoryLimit = av_ini_bytes((string) ini_get('memory_limit'));
+    $needed = $width * $height * 5 + 8 * 1048576;
+    if ($width * $height > 50000000 || ($memoryLimit > 0 && $needed > $memoryLimit - memory_get_usage())) {
+        return false;
+    }
+
+    $image = @$loader($source);
+    if ($image === false) {
+        return false;
+    }
+
+    $scale = min(1.0, AV_THUMB_WIDTH / $width);
+    $thumbWidth = max(1, (int) round($width * $scale));
+    $thumbHeight = max(1, (int) round($height * $scale));
+    $thumb = imagecreatetruecolor($thumbWidth, $thumbHeight);
+    imagefill($thumb, 0, 0, imagecolorallocate($thumb, 22, 36, 61));
+    imagecopyresampled($thumb, $image, 0, 0, 0, 0, $thumbWidth, $thumbHeight, $width, $height);
+
+    if ($mimeType === 'image/jpeg' && function_exists('exif_read_data') && function_exists('imagerotate')) {
+        $exif = @exif_read_data($source);
+        $angle = match ((int) ($exif['Orientation'] ?? 1)) {
+            3 => 180,
+            6 => -90,
+            8 => 90,
+            default => 0,
+        };
+        if ($angle !== 0) {
+            $rotated = imagerotate($thumb, $angle, 0);
+            if ($rotated !== false) {
+                $thumb = $rotated;
+            }
+        }
+    }
+
+    $temporary = $target . '.' . bin2hex(random_bytes(4)) . '.tmp';
+    $written = imagejpeg($thumb, $temporary, 78);
+    if (!$written || !@rename($temporary, $target)) {
+        @unlink($temporary);
+        return false;
+    }
+    @chmod($target, 0600);
+
+    return true;
+}
+
+/**
+ * Entrega a miniatura da biblioteca, com cache privado e ETag. Se não der para gerá-la,
+ * entrega o original (comportamento anterior).
+ */
+function av_serve_thumbnail(array $media, string $mediaDirectory): never
+{
+    $storedName = (string) ($media['stored_name'] ?? '');
+    $mimeType = (string) ($media['mime_type'] ?? '');
+    if (!av_valid_stored_name($storedName) || !str_starts_with($mimeType, 'image/')) {
+        http_response_code(404);
+        exit('Arquivo não encontrado.');
+    }
+
+    $source = $mediaDirectory . DIRECTORY_SEPARATOR . $storedName;
+    $thumbDirectory = av_thumbs_dir($mediaDirectory);
+    $target = av_thumb_path($mediaDirectory, (string) $media['id']);
+
+    if (!is_file($target)) {
+        $ready = is_file($source)
+            && (is_dir($thumbDirectory) || @mkdir($thumbDirectory, 0700, true) || is_dir($thumbDirectory))
+            && av_make_thumbnail($source, $mimeType, $target);
+        if (!$ready) {
+            av_stream_media($media, $mediaDirectory, false);
+        }
+    }
+
+    $etag = '"' . $media['id'] . '-t1"';
+    header('Cache-Control: private, max-age=86400');
+    header('ETag: ' . $etag);
+    if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag) {
+        http_response_code(304);
+        exit;
+    }
+
+    $size = filesize($target);
+    if ($size === false) {
+        http_response_code(500);
+        exit;
+    }
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . $size);
+    readfile($target);
+    exit;
+}
+
 function av_stream_media(array $media, string $mediaDirectory, bool $download = false): never
 {
     $storedName = (string) ($media['stored_name'] ?? '');
-    if (!preg_match('/^[a-f0-9]{48}\.(jpg|png|gif|webp|mp4|webm|mov)$/', $storedName)) {
+    if (!av_valid_stored_name($storedName)) {
         http_response_code(404);
         exit('Arquivo não encontrado.');
     }
@@ -218,7 +411,7 @@ function av_stream_media(array $media, string $mediaDirectory, bool $download = 
     header('Content-Length: ' . $length);
     header('Accept-Ranges: bytes');
     header('Cache-Control: private, no-store, max-age=0');
-    header('Content-Disposition: ' . $disposition . '; filename="media"; filename*=UTF-8\'\'' . rawurlencode($originalName));
+    header('Content-Disposition: ' . $disposition . '; filename="' . av_ascii_filename($originalName) . '"; filename*=UTF-8\'\'' . rawurlencode($originalName));
     if ($status === 206) {
         header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
     }

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 function av_page_start(string $title, ?array $owner = null, string $active = ''): void
 {
-    $nav = ['library' => ['./', 'Dashboard de Mídias'], 'guide' => ['?action=guide', 'Recursos e como usar'], 'security' => ['?action=security', 'Segurança e LGPD']];
+    $nav = ['library' => ['./', 'Dashboard de Mídias'], 'guide' => ['?action=guide', 'Recursos e como usar'], 'security' => ['?action=security', 'Segurança e LGPD'], 'account' => ['?action=account', 'Conta']];
     ?>
     <!doctype html>
     <html lang="pt-BR">
@@ -13,9 +13,10 @@ function av_page_start(string $title, ?array $owner = null, string $active = '')
       <meta name="robots" content="noindex,nofollow,noarchive">
       <meta name="color-scheme" content="dark">
       <title><?= av_e($title) ?> | AuraVault</title>
-      <link rel="stylesheet" href="assets/style.css?v=0.2.0">
+      <link rel="stylesheet" href="assets/style.css?v=<?= AV_VERSION ?>">
     </head>
     <body>
+      <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
       <header class="topbar">
         <div class="topbar-inner">
           <a class="brand" href="./" aria-label="AuraVault, início">
@@ -39,7 +40,7 @@ function av_page_start(string $title, ?array $owner = null, string $active = '')
           <?php endif; ?>
         </div>
       </header>
-      <main class="page-shell">
+      <main class="page-shell" id="conteudo" tabindex="-1">
     <?php
 }
 
@@ -48,7 +49,7 @@ function av_page_end(): void
     ?>
       </main>
       <footer class="site-footer">Arquivos e banco ficam na conta HostGator do titular. Seus arquivos permanecem privados até você criar um link de compartilhamento.</footer>
-      <script src="assets/app.js?v=0.2.0" defer></script>
+      <script src="assets/app.js?v=<?= AV_VERSION ?>" defer></script>
     </body>
     </html>
     <?php
@@ -167,7 +168,7 @@ function av_render_notice(?array $notice): void
           <label for="share-created-url">Link gerado. Ele aparece só agora: copie e envie apenas à pessoa desejada.</label>
           <div class="share-created-row">
             <input id="share-created-url" type="text" readonly value="<?= av_e($notice['share_url']) ?>" data-select-on-click>
-            <button class="button button-primary" type="button" data-copy="#share-created-url">Copiar link</button>
+            <button class="button button-primary" type="button" data-copy="#share-created-url" aria-live="polite">Copiar link</button>
           </div>
         </div>
       <?php endif; ?>
@@ -214,7 +215,7 @@ function av_render_library(array $owner, array $media, array $activeShares, int 
         <div class="side-usage">
           <span class="side-label">ESPAÇO USADO</span>
           <strong><?= av_e(av_format_bytes($stats['bytes'])) ?></strong>
-          <small>Limite de 100 MB por arquivo. O total depende do plano HostGator.</small>
+          <small>Limite de <?= av_e(av_format_bytes(av_effective_upload_limit())) ?> por arquivo. O total depende do plano HostGator.</small>
         </div>
         <a class="button button-soft" href="?action=guide">Ver guia de recursos →</a>
       </aside>
@@ -224,7 +225,7 @@ function av_render_library(array $owner, array $media, array $activeShares, int 
         <div class="panel dash-hero">
           <span class="hero-mark" aria-hidden="true">▦</span>
           <div class="hero-text">
-            <h1><?= $title ?></h1>
+            <h1><?= av_e($title) ?></h1>
             <span><?= $stats['images'] ?> foto<?= $stats['images'] === 1 ? '' : 's' ?> · <?= $stats['videos'] ?> vídeo<?= $stats['videos'] === 1 ? '' : 's' ?> · <?= av_e(av_format_bytes($stats['bytes'])) ?><?= $filtered ? ' · ' . $matching . ' no filtro atual' : '' ?></span>
           </div>
           <a class="button button-outline" href="#enviar" data-open-upload>↑ Enviar</a>
@@ -234,11 +235,11 @@ function av_render_library(array $owner, array $media, array $activeShares, int 
           <summary>
             <span class="eyebrow">ENVIAR AO COFRE</span>
             <span class="upload-summary-title">Envie fotos ou vídeos</span>
-            <span class="upload-summary-sub">JPG, PNG, GIF, WebP, MP4, WebM e MOV. Até 100 MB por arquivo.</span>
+            <span class="upload-summary-sub">JPG, PNG, GIF, WebP, MP4, WebM e MOV. Até <?= av_e(av_format_bytes(av_effective_upload_limit())) ?> por arquivo.</span>
           </summary>
           <form method="post" action="?action=upload" enctype="multipart/form-data" class="upload-form">
             <?= av_csrf_field() ?>
-            <input type="hidden" name="MAX_FILE_SIZE" value="104857600">
+            <input type="hidden" name="MAX_FILE_SIZE" value="<?= av_effective_upload_limit() ?>">
             <label class="dropzone" for="media-files">
               <strong>Escolher arquivos</strong>
               <span data-file-label>Selecione um ou mais arquivos</span>
@@ -277,10 +278,10 @@ function av_render_library(array $owner, array $media, array $activeShares, int 
               <article class="media-card">
                 <a class="media-thumb" href="?action=view&amp;id=<?= $id ?>" aria-label="Ver <?= av_e($item['original_name']) ?>">
                   <?php if ($isVideo): ?>
-                    <video src="?action=file&amp;id=<?= $id ?>#t=0.5" preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"></video>
+                    <span class="thumb-video" aria-hidden="true"></span>
                     <span class="thumb-play" aria-hidden="true">▶</span>
                   <?php else: ?>
-                    <img src="?action=file&amp;id=<?= $id ?>" alt="" loading="lazy" decoding="async">
+                    <img src="?action=thumb&amp;id=<?= $id ?>" alt="" loading="lazy" decoding="async">
                   <?php endif; ?>
                   <span class="thumb-ext"><?= av_e(av_media_extension($item)) ?></span>
                 </a>
@@ -395,8 +396,15 @@ function av_render_guide(array $owner): void
 function av_render_security(array $owner): void
 {
     av_page_start('Segurança e LGPD', $owner, 'security');
-    $active = ['HTTPS obrigatório, com cabeçalhos de segurança e política de conteúdo restritiva.', 'Instalador protegido por chave gravada fora da pasta pública.', 'Senha do titular com hash forte e bloqueio após tentativas erradas.', 'Proteção CSRF em todas as ações e consultas parametrizadas no banco.', 'Mídias fora da pasta pública, entregues só com sessão ou link válido.', 'Links temporários guardados como hash, com validade e revogação.', 'Nenhum recurso de terceiros (fontes, scripts ou rastreadores) é carregado.'];
+    $active = ['HTTPS obrigatório (HSTS), com cabeçalhos de segurança e política de conteúdo restritiva.', 'Instalador protegido por chave gravada fora da pasta pública.', 'Senha do titular com hash forte; bloqueio de tentativas feito no servidor, por IP e e-mail.', 'Troca de senha pelo próprio titular.', 'Proteção CSRF em todas as ações e consultas parametrizadas no banco.', 'Mídias fora da pasta pública, entregues só com sessão ou link válido.', 'Links temporários guardados como hash, com validade e revogação; links vencidos são limpos automaticamente.', 'Miniaturas geradas no servidor, sem metadados (como localização), quando a extensão GD está ativa.', 'Nenhum recurso de terceiros (fontes, scripts ou rastreadores) é carregado.'];
     $planned = ['Criptografia das mídias em repouso.', 'Painel do titular: exportação, histórico e exclusão da conta.', 'Política de privacidade e registro das operações de tratamento.', 'Backup automático cifrado com teste de restauração.', 'Verificação em duas etapas no login.'];
+    $diagnostics = [
+        ['Versão do PHP', PHP_VERSION, PHP_VERSION_ID >= 80300],
+        ['Limite efetivo de envio', av_format_bytes(av_effective_upload_limit()), av_effective_upload_limit() >= AV_MAX_UPLOAD_BYTES],
+        ['Miniaturas (extensão GD)', av_thumbnails_available() ? 'Disponível' : 'Indisponível', av_thumbnails_available()],
+        ['Conexão HTTPS', av_is_https() ? 'Ativa' : 'Inativa', av_is_https()],
+        ['Versão do AuraVault', AV_VERSION, true],
+    ];
     ?>
     <section class="narrow">
       <h1>Segurança e LGPD</h1>
@@ -411,7 +419,38 @@ function av_render_security(array $owner): void
           <ul><?php foreach ($planned as $item): ?><li class="todo"><?= av_e($item) ?></li><?php endforeach; ?></ul>
         </div>
       </div>
+      <div class="panel sec-list">
+        <span class="eyebrow">DIAGNÓSTICO DO SERVIDOR</span>
+        <ul><?php foreach ($diagnostics as [$label, $value, $healthy]): ?><li class="<?= $healthy ? 'ok' : 'todo' ?>"><?= av_e($label) ?>: <strong><?= av_e($value) ?></strong><?= $healthy ? '' : ' — requer atenção (recomendado: PHP 8.3+, limite de 100 MB, GD e HTTPS)' ?></li><?php endforeach; ?></ul>
+      </div>
       <p class="panel data-note">Hoje o AuraVault não criptografa as mídias em repouso. Use HTTPS, senha forte e mantenha cópias de segurança protegidas.</p>
+    </section>
+    <?php
+    av_page_end();
+}
+
+function av_render_account(array $owner, ?array $notice): void
+{
+    av_page_start('Conta', $owner, 'account');
+    ?>
+    <section class="narrow">
+      <h1>Conta do titular</h1>
+      <p class="lede">E-mail da conta: <strong><?= av_e($owner['email']) ?></strong></p>
+      <?php av_render_notice($notice); ?>
+      <div class="panel">
+        <span class="eyebrow">ALTERAR SENHA</span>
+        <form method="post" action="?action=password" class="stack-form">
+          <?= av_csrf_field() ?>
+          <label for="current_password">Senha atual</label>
+          <input id="current_password" name="current_password" type="password" required autocomplete="current-password">
+          <label for="new_password">Nova senha</label>
+          <input id="new_password" name="new_password" type="password" minlength="<?= AV_PASSWORD_MIN_LENGTH ?>" required autocomplete="new-password">
+          <small>Pelo menos <?= AV_PASSWORD_MIN_LENGTH ?> caracteres, exclusiva e guardada em um gerenciador de senhas.</small>
+          <label for="confirm_password">Repita a nova senha</label>
+          <input id="confirm_password" name="confirm_password" type="password" minlength="<?= AV_PASSWORD_MIN_LENGTH ?>" required autocomplete="new-password">
+          <button class="button button-primary" type="submit">Salvar nova senha</button>
+        </form>
+      </div>
     </section>
     <?php
     av_page_end();
@@ -426,7 +465,7 @@ function av_render_media_view(array $media, ?string $shareToken = null): void
     ?>
     <section class="viewer-heading narrow-wide">
       <a class="back-link" href="<?= $shareToken === null ? './' : '#' ?>" <?= $shareToken !== null ? 'data-history-back' : '' ?>>← <?= $shareToken === null ? 'Voltar à biblioteca' : 'Voltar' ?></a>
-      <p class="eyebrow">MÍDIA <?= str_starts_with($media['mime_type'], 'video/') ? 'COMPARTILHADA' : 'PRIVADA' ?></p>
+      <p class="eyebrow">MÍDIA <?= $shareToken !== null ? 'COMPARTILHADA' : 'PRIVADA' ?></p>
       <h1><?= av_e($media['original_name']) ?></h1>
     </section>
     <div class="viewer-frame">
